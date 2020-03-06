@@ -1,5 +1,5 @@
-//#ifndef MPC_H
-//#define MPC_H
+#ifndef MPC_H
+#define MPC_H
 
 #include <vector>
 #include "Eigen-3.3/Eigen/Core"
@@ -15,4 +15,4 @@ class MPC {
   vector<double> Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs);
 };
 
-//#endif
+#endif
