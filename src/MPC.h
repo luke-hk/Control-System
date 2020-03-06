@@ -12,7 +12,7 @@ class MPC {
 
   virtual ~MPC();
 
-  vector<double> Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs);
+  vector<double> Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double setPoint);
 };
 
 #endif

@@ -21,12 +21,16 @@ double V_r = 1.0;     //Volume of Robot
 double m = 1.0;       //Mass of Robot
 double rho_f = 1.0;   //Density of Water
 double g = 9.81;
-double setDepth = 1.0;
+//double setDepth = 1.0;
 
 class FG_eval {
  public:
   Eigen::VectorXd coeffs;
-  FG_eval(Eigen::VectorXd coeffs) { this->coeffs = coeffs; }
+  double setPoint;
+  FG_eval(Eigen::VectorXd coeffs, double setPoint) { 
+    this->coeffs = coeffs; 
+    this->setPoint = setPoint;
+  }
 
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
   void operator()(ADvector& fg, const ADvector& vars) {
@@ -34,7 +38,7 @@ class FG_eval {
     // Adding Cost section
     for (int t = 0; t < N; t++) {
       fg[0] += 5000 * CppAD::pow(vars[v_start + t], 2);
-      fg[0] += 1500 * CppAD::pow((vars[x_start + t] - setDepth), 2);
+      fg[0] += 10000 * CppAD::pow((vars[x_start + t] - setPoint), 2);
       fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);  // Reference velocity cost
       fg[0] += 500 * CppAD::pow((vars[thrust_start + t]), 2); // Limit thrust use
       fg[0] += 5000 * CppAD::pow((vars[gasVol_start + t + 1] - vars[gasVol_start + t]), 2); // Change in Gas Vol
@@ -83,7 +87,7 @@ class FG_eval {
 MPC::MPC() {}
 MPC::~MPC() {}
 
-vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
+vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double setPoint) {
   bool ok = true;
   size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
@@ -142,7 +146,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   constraints_upperbound[a_start] = a;
 
   // object that computes objective and constraints
-  FG_eval fg_eval(coeffs);
+  FG_eval fg_eval(coeffs, setPoint);
 
   // options for IPOPT solver
   std::string options;
@@ -179,7 +183,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   result.push_back(solution.x[thrust_start]);
   for (int i = 0; i < N-1; i++) {
     result.push_back(solution.x[x_start + i + 1]);
-    result.push_back(solution.x[v_start + i + 1]);
   }
   return result;
 }
