@@ -11,9 +11,9 @@ double dt = 0.1;
 
 size_t x_start = 0;
 size_t v_start = x_start + N;
-size_t a_start = v_start + N;
-size_t gasVol_start = a_start + N;
-size_t thrust_start = gasVol_start + N - 1;
+size_t Vol_start = v_start + N;
+size_t gasRate_start = Vol_start + N;
+size_t thrust_start = gasRate_start + N - 1;
 
 double CoD = .2;      //Coefficient of Drag
 double csa = 1.0;     //Cross Sectional Area
@@ -39,16 +39,15 @@ class FG_eval {
     for (int t = 0; t < N; t++) {
       fg[0] += 5000 * CppAD::pow(vars[v_start + t], 2);
       fg[0] += 10000 * CppAD::pow((vars[x_start + t] - setPoint), 2);
-      fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);  // Reference velocity cost
       fg[0] += 500 * CppAD::pow((vars[thrust_start + t]), 2); // Limit thrust use
-      fg[0] += 5000 * CppAD::pow((vars[gasVol_start + t + 1] - vars[gasVol_start + t]), 2); // Change in Gas Vol
+      fg[0] += 5000 * CppAD::pow((vars[gasRate_start + t + 1] - vars[gasRate_start + t]), 2); // Change in Gas Vol
     }
 
     // Initialization
     fg[1 + x_start] = vars[x_start];
     fg[1 + v_start] = vars[v_start];
-    fg[1 + a_start] = vars[a_start];
-    fg[1 + gasVol_start] = vars[gasVol_start];
+    fg[1 + Vol_start] = vars[Vol_start];
+    fg[1 + gasRate_start] = vars[gasRate_start];
     fg[1 + thrust_start] = vars[thrust_start];
 
     // Create predicted trajectory. Its length depends on N
@@ -56,30 +55,32 @@ class FG_eval {
       // The state at time t+1 .
       AD<double> x1 = vars[x_start + t];
       AD<double> v1 = vars[v_start + t];
-      AD<double> a1 = vars[a_start + t];
+      AD<double> Vol1 = vars[Vol_start + t];
 
       // The state at time t.
       AD<double> x0 = vars[x_start + t - 1];
       AD<double> v0 = vars[v_start + t - 1];
-      AD<double> a0 = vars[a_start + t - 1];
+      AD<double> Vol0 = vars[Vol_start + t - 1];
 
       // Only consider the actuation at time t.
-      AD<double> gasVol0 = vars[gasVol_start + t - 1];
+      AD<double> gasRate0 = vars[gasRate_start + t - 1];
       AD<double> thrust0 = vars[thrust_start + t - 1];
 
       // Get next values
       double latency = 0.1;
       fg[1 + x_start + t] = x1 - (x0 + v0 * (dt + latency));
-      fg[1 + v_start + t] = v1 - (v0 + a0 * (dt + latency));
-      // hooplah = whole lotta;
+      fg[1 + Vol_start + t] = Vol1 - (Vol0 + gasRate0 * (dt + latency));
       AD<double> PressDiff = x0/10 + 1;
-      AD<double> B = 2 * rho_f * (V_r + gasVol0/PressDiff) * g;
+      AD<double> B = 2 * rho_f * (V_r + Vol0/PressDiff) * g;
       AD<double> Drag = CoD * csa * rho_f * pow(v0, 2);
+      AD<double> accel;
       if (v0 >= 0) { //Moving down, so drag force is up
-        fg[1 + a_start + t] = a1 - (thrust0 + (m * g) - B - Drag)/(2 * m); //Down is positive
+        accel = (thrust0 + (m * g) - B - Drag)/(2 * m); //Down is positive
       } else { //Moving up, so drag force is down
-        fg[1 + a_start + t] = a1 - (thrust0 + (m * g) - B + Drag)/(2 * m); //Down is positive
+        accel = (thrust0 + (m * g) - B + Drag)/(2 * m); //Down is positive
       }
+      fg[1 + v_start + t] = v1 - (v0 + accel * (dt + latency));
+      // hooplah = whole lotta;
     }
   }
 };
@@ -94,7 +95,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
 
   double x = state[0];
   double v = state[1];
-  double a = state[2];
+  double Vol = state[2];
 
   size_t n_vars = state.size() * N + 2 * (N-1);
   size_t n_constraints = N * state.size();
@@ -108,19 +109,25 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
 
   vars[x_start] = x;
   vars[v_start] = v;
-  vars[a_start] = a;
+  vars[Vol_start] = Vol;
 
   Dvector vars_lowerbound(n_vars);
   Dvector vars_upperbound(n_vars);
-  for (int i = 0; i < gasVol_start; i++) {
+  for (int i = 0; i < Vol_start; i++) {
     vars_lowerbound[i] = -1.0e19;
     vars_upperbound[i] = 1.0e19;
   }
 
-  // Gas vol can't go less than 0 or greater than 50 mL
-  for (int i = gasVol_start; i < thrust_start; i++) {
+  // Gas volume can't exceed 50mL
+  for (int i = Vol_start; i < gasRate_start; i++) {
     vars_lowerbound[i] = 0;
     vars_upperbound[i] = 50;
+  }
+
+  // Gas production/consumption cant exceed 0.025mL/s
+  for (int i = gasRate_start; i < thrust_start; i++) {
+    vars_lowerbound[i] = -0.025/dt;
+    vars_upperbound[i] = 0.025/dt;
   }
 
   // For thrust (4lbf = 17.5N)
@@ -139,11 +146,11 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
   }
   constraints_lowerbound[x_start] = x;
   constraints_lowerbound[v_start] = v;
-  constraints_lowerbound[a_start] = a;
+  constraints_lowerbound[Vol_start] = Vol;
 
   constraints_upperbound[x_start] = x;
   constraints_upperbound[v_start] = v;
-  constraints_upperbound[a_start] = a;
+  constraints_upperbound[Vol_start] = Vol;
 
   // object that computes objective and constraints
   FG_eval fg_eval(coeffs, setPoint);
@@ -179,8 +186,9 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs, double 
   std::cout << "Cost " << cost << std::endl;
 
   vector<double> result;
-  result.push_back(solution.x[gasVol_start]);
+  result.push_back(solution.x[gasRate_start]);
   result.push_back(solution.x[thrust_start]);
+  //Predicted trajectory
   for (int i = 0; i < N-1; i++) {
     result.push_back(solution.x[x_start + i + 1]);
   }

@@ -45,7 +45,7 @@ int main() {
 
     double x = 0.0;
     double v = 0.0;
-    double a = 0.0;
+    double Vol = 0.0;
 
     double setPoint = 1.5;
 
@@ -58,7 +58,7 @@ int main() {
 
     Eigen::VectorXd state(3);
     // Current state
-    state << x, v, a;
+    state << x, v, Vol;
 
     auto vars = mpc.Solve(state, coeffs, setPoint);
     double gasVol = vars[0];
